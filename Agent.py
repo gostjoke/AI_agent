@@ -98,6 +98,8 @@ class Agent:
             {"role": "system", "content": self.system},
             {"role": "user", "content": task},
         ]
+        log.info("[%s] model=%s tools=%s", self.name, self.model,
+                 [f.__name__ for f in self.toolbox.functions])
         for step in range(1, self.max_steps + 1):
             resp = self.client.chat(
                 model=self.model,
@@ -165,16 +167,56 @@ def read_text_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".log", ".py", ".sql", ".html", ".xml", ".yaml", ".yml"}
+
+
 @box.tool(confirm=True)
 def write_text_file(path: str, content: str) -> str:
-    """Write text to a file, overwriting it if it exists.
+    """Write a PLAIN TEXT file (.txt .md .csv .json ...). Cannot create Excel files.
 
     Args:
-        path: Path of the file to write.
+        path: Path of the text file to write.
         content: Full text content to write.
     """
+    ext = Path(path).suffix.lower()
+    if ext in {".xlsx", ".xls", ".xlsm"}:
+        raise ValueError("Excel files must be created with write_excel_sheet, not write_text_file.")
+    if ext not in TEXT_EXTENSIONS:
+        raise ValueError(f"'{ext}' is not a plain-text format. Allowed: {sorted(TEXT_EXTENSIONS)}")
     Path(path).write_text(content, encoding="utf-8")
     return f"wrote {len(content)} chars to {path}"
+
+
+@box.tool(confirm=True)
+def write_excel_sheet(path: str, sheet_name: str, headers: list[str], rows: list[list[str]]) -> str:
+    """Create or replace ONE sheet in a real Excel .xlsx file. Call once per table/sheet.
+
+    Args:
+        path: Path of the .xlsx file, e.g. "output.xlsx".
+        sheet_name: Name of the sheet to write, e.g. "Sales".
+        headers: Column names, e.g. ["Product", "Qty"].
+        rows: Table data, one inner list per row, e.g. [["Apple", 10], ["Banana", 5]].
+    """
+    from openpyxl import Workbook, load_workbook
+
+    if Path(path).suffix.lower() != ".xlsx":
+        raise ValueError("path must end with .xlsx")
+    note = ""
+    try:
+        wb = load_workbook(path) if Path(path).exists() else None
+    except Exception:  # 檔案存在但不是真正的 Excel（例如被寫成純文字），直接重建
+        wb, note = None, " (existing file was not a valid Excel file and was replaced)"
+    if wb is None:
+        wb = Workbook()
+        wb.remove(wb.active)
+    if sheet_name in wb.sheetnames:
+        del wb[sheet_name]
+    ws = wb.create_sheet(sheet_name)
+    ws.append(list(headers))
+    for r in rows:
+        ws.append(list(r))
+    wb.save(path)
+    return f"wrote sheet '{sheet_name}' ({len(rows)} rows) to {path}{note}"
 
 
 if __name__ == "__main__":
@@ -183,7 +225,11 @@ if __name__ == "__main__":
         sys.exit('用法: python agent.py "任務描述"')
     file_agent = Agent(
         name="file-helper",
-        system="你是檔案助理。用提供的工具完成任務，最後用繁體中文簡短回報結果。",
+        system=(
+            "你是檔案助理。用提供的工具完成任務，最後用繁體中文簡短回報結果。"
+            "Excel (.xlsx) 一律用 write_excel_sheet，每個工作表呼叫一次；"
+            "write_text_file 只能寫純文字檔。"
+        ),
         toolbox=box,
     )
     print(file_agent.run(" ".join(sys.argv[1:])))

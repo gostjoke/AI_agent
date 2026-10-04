@@ -218,3 +218,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# xlsx, pdf, xls, word documents
+*.xlsx
+*.pdf
+*.xls
+*.doc
+*.docx
+*.ppt
+*.pptx
+*.odt
+*.ods
+*.odp
